@@ -24,3 +24,18 @@ python -m venv venv
 
 # הפעלה (Windows)
 venv\Scripts\activate
+```
+
+### 3. התקנת הספריות הדרושות
+```bash
+pip install -r requirements.txt
+```
+
+### 4. הגדרת מפתחות
+יש להוסיף את המפתחות לקובץ .env
+
+### 4. הרצת האפליקציה
+```bash
+streamlit run web_app.py
+```
+
