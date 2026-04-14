@@ -69,7 +69,7 @@ def extract_to_json(raw_results):
 
 # --- ממשק Streamlit ---
 
-st.set_page_config(page_title="סורק סניפי AI", layout="wide")
+st.set_page_config(page_title="סורק סניפים AI", layout="wide")
 
 # CSS ליישור לימין
 st.markdown("""
