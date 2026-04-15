@@ -1,53 +1,31 @@
 import streamlit as st
 import pandas as pd
 from config import setup_environment
-from logic import fetch_search_results, extract_branches
+from logic import fetch_search_results, extract_branches_raw, filter_with_embeddings
 
-# 1. טעינת הגדרות (מפתחות ונטפרי)
 keys = setup_environment()
 
-# 2. הגדרות דף ועיצוב RTL (יישור לימין)
-st.set_page_config(page_title="Branch Locator", layout="wide")
+st.set_page_config(page_title="Branch Locator - Embedding AI", layout="wide")
+st.markdown("<style>.main { direction: rtl; text-align: right; }</style>", unsafe_allow_html=True)
 
-st.markdown("""
-    <style>
-    /* הופך את כל האפליקציה לימין לשמאל */
-    .main, .stApp { direction: rtl; text-align: right; }
-    /* דואג שגם תיבות הטקסט והכפתורים יתיישרו */
-    div[data-testid="stMarkdownContainer"] > p { text-align: right; }
-    button { direction: rtl; }
-    </style>
-    """, unsafe_allow_html=True)
+st.title("🏙️ מאתר סניפים עם סינון Embeddings")
 
-st.title("🏙️ מאתר סניפים חכם")
-st.write("הכניסי שם חברה כדי להתחיל בסריקה חכמה של האינטרנט.")
+company = st.text_input("שם החברה:")
 
-company = st.text_input("שם החברה לחיפוש:", placeholder="לדוגמה: אופטיקה הלפרין")
-
-if st.button("התחל חיפוש"):
+if st.button("התחל תהליך חכם"):
     if company:
-        # 3. שימוש ב-st.status כדי להראות את התהליך (בדיוק כמו שאהבת!)
-        with st.status("מבצע מחקר שוק...", expanded=True) as status:
-            
-            st.write("🔍 מחפש מקורות מידע בגוגל...")
+        with st.status("מפעיל אלגוריתם סינון וקטורי...", expanded=True) as status:
+            st.write("🔍 שלב 1: איסוף מידע גולמי...")
             raw_data = fetch_search_results(company, keys["SERPER_KEY"])
             
-            st.write(f"🧠 מחלץ סניפים מ-{len(raw_data)} מקורות שמצאתי...")
-            branches = extract_branches(raw_data, company, keys["GEMINI_KEY"])
+            st.write("🧠 שלב 2: חילוץ ישויות (Entity Extraction)...")
+            all_branches = extract_branches_raw(raw_data, company, keys["GEMINI_KEY"])
             
-            if branches:
-                status.update(label="הסריקה הושלמה בהצלחה!", state="complete", expanded=False)
-            else:
-                status.update(label="הסריקה הסתיימה ללא תוצאות.", state="error", expanded=True)
+            st.write(f"📏 שלב 3: חישוב מרחקים וקטוריים לסינון {len(all_branches)} סניפים...")
+            final_branches = filter_with_embeddings(all_branches, keys["GEMINI_KEY"])
             
-        # 4. הצגת התוצאות
-        if branches:
-            st.subheader(f"נמצאו {len(branches)} סניפים עבור '{company}':")
-            df = pd.DataFrame(branches)
-            st.dataframe(df, use_container_width=True)
-            
-            # כפתור הורדה
-            csv = df.to_csv(index=False).encode('utf-8-sig')
-            st.download_button("הורדת הרשימה כ-CSV", csv, f"{company}_branches.csv", "text/csv")
-    else:
-        st.warning("בבקשה הכניסי שם חברה.")
+            status.update(label="הסינון הושלם!", state="complete", expanded=False)
+
+        if final_branches:
+            st.success(f"נשארו {len(final_branches)} סניפים ייחודיים לאחר סינון דמיון.")
+            st.dataframe(pd.DataFrame(final_branches), use_container_width=True)
