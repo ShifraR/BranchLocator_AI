@@ -1,77 +1,53 @@
 import streamlit as st
 import pandas as pd
-import os
-import requests
-import json
-from dotenv import load_dotenv
+from config import setup_environment
+from logic import fetch_search_results, extract_branches
 
-# הגדרות נטפרי
-netfree_windows_path = r'C:\ProgramData\NetFree\CA\netfree-ca-bundle-curl.crt'
-if os.name == 'nt' and os.path.exists(netfree_windows_path):
-    os.environ['SSL_CERT_FILE'] = netfree_windows_path
-    os.environ['REQUESTS_CA_BUNDLE'] = netfree_windows_path
+# 1. טעינת הגדרות (מפתחות ונטפרי)
+keys = setup_environment()
 
-load_dotenv()
-GEMINI_KEY = os.getenv("GEMINI_API_KEY")
-SERPER_KEY = os.getenv("SERPER_API_KEY")
+# 2. הגדרות דף ועיצוב RTL (יישור לימין)
+st.set_page_config(page_title="Branch Locator", layout="wide")
 
-def search_serper(company_name):
-    """חיפוש יציב דרך Serper - ללא הגבלות 429 קשות"""
-    url = "https://google.serper.dev/search"
-    query = f"סניפים של {company_name} בישראל רשימה כתובות"
-    payload = {"q": query, "gl": "il", "hl": "iw", "num": 15}
-    headers = {'X-API-KEY': SERPER_KEY, 'Content-Type': 'application/json'}
-    response = requests.post(url, json=payload, headers=headers)
-    return response.json().get('organic', [])
+st.markdown("""
+    <style>
+    /* הופך את כל האפליקציה לימין לשמאל */
+    .main, .stApp { direction: rtl; text-align: right; }
+    /* דואג שגם תיבות הטקסט והכפתורים יתיישרו */
+    div[data-testid="stMarkdownContainer"] > p { text-align: right; }
+    button { direction: rtl; }
+    </style>
+    """, unsafe_allow_html=True)
 
-def extract_with_gemini(raw_results, company_name):
-    """חילוץ חכם של נתונים מתוך תוצאות החיפוש"""
-    context = ""
-    for res in raw_results:
-        context += f"Source: {res.get('link')}\nInfo: {res.get('title')} - {res.get('snippet')}\n---\n"
+st.title("🏙️ מאתר סניפים חכם")
+st.write("הכניסי שם חברה כדי להתחיל בסריקה חכמה של האינטרנט.")
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={GEMINI_KEY}"
-    
-    prompt = f"""
-    אתה מנתח נתונים מקצועי. חלץ רשימת סניפים של {company_name} מהטקסט הבא.
-    הנחיות:
-    1. החזר רשימת JSON בלבד של אובייקטים.
-    2. כל אובייקט יכיל: 'שם הסניף', 'כתובת', 'עיר', 'מקור'.
-    3. אם יש סניפים כפולים, אחד אותם לרשומה אחת.
-    
-    טקסט לניתוח:
-    {context}
-    """
-    
-    payload = {"contents": [{"parts": [{"text": prompt}]}]}
-    response = requests.post(url, json=payload, timeout=60)
-    result = response.json()
-    
-    try:
-        raw_text = result['candidates'][0]['content']['parts'][0]['text']
-        clean_json = raw_text.replace("```json", "").replace("```", "").strip()
-        return json.loads(clean_json)
-    except:
-        return []
+company = st.text_input("שם החברה לחיפוש:", placeholder="לדוגמה: אופטיקה הלפרין")
 
-# ממשק המשתמש
-st.set_page_config(page_title="Branch Locator AI", layout="wide")
-st.title("🏙️ מאתר סניפים חכם (Hybrid AI)")
-
-company = st.text_input("הכניסי שם חברה (למשל: סופר-פארם, בנק דיסקונט):")
-
-if st.button("חפש סניפים"):
+if st.button("התחל חיפוש"):
     if company:
-        with st.status("סורק נתונים...", expanded=True) as status:
-            st.write("🌐 אוסף מידע מרשת האינטרנט...")
-            results = search_serper(company)
-            st.write("🧠 מנתח ומנקה כפילויות בעזרת AI...")
-            branches = extract_with_gemini(results, company)
-            status.update(label="הסריקה הושלמה!", state="complete")
-        
+        # 3. שימוש ב-st.status כדי להראות את התהליך (בדיוק כמו שאהבת!)
+        with st.status("מבצע מחקר שוק...", expanded=True) as status:
+            
+            st.write("🔍 מחפש מקורות מידע בגוגל...")
+            raw_data = fetch_search_results(company, keys["SERPER_KEY"])
+            
+            st.write(f"🧠 מחלץ סניפים מ-{len(raw_data)} מקורות שמצאתי...")
+            branches = extract_branches(raw_data, company, keys["GEMINI_KEY"])
+            
+            if branches:
+                status.update(label="הסריקה הושלמה בהצלחה!", state="complete", expanded=False)
+            else:
+                status.update(label="הסריקה הסתיימה ללא תוצאות.", state="error", expanded=True)
+            
+        # 4. הצגת התוצאות
         if branches:
+            st.subheader(f"נמצאו {len(branches)} סניפים עבור '{company}':")
             df = pd.DataFrame(branches)
             st.dataframe(df, use_container_width=True)
-            st.download_button("הורדת CSV", df.to_csv(index=False).encode('utf-8-sig'), "branches.csv")
-        else:
-            st.error("לא נמצאו סניפים. נסי לחפש שם חברה אחר.")
+            
+            # כפתור הורדה
+            csv = df.to_csv(index=False).encode('utf-8-sig')
+            st.download_button("הורדת הרשימה כ-CSV", csv, f"{company}_branches.csv", "text/csv")
+    else:
+        st.warning("בבקשה הכניסי שם חברה.")
