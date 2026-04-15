@@ -34,7 +34,7 @@ pip install -r requirements.txt
 ### 4. הגדרת מפתחות
 יש להוסיף את המפתחות לקובץ .env
 
-### 4. הרצת האפליקציה
+### 5. הרצת האפליקציה
 ```bash
 streamlit run web_app.py
 ```

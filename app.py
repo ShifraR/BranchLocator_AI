@@ -5,7 +5,7 @@ import requests
 import json
 from dotenv import load_dotenv
 
-# --- הגדרות נטפרי וסביבה ---
+# הגדרות נטפרי
 netfree_windows_path = r'C:\ProgramData\NetFree\CA\netfree-ca-bundle-curl.crt'
 if os.name == 'nt' and os.path.exists(netfree_windows_path):
     os.environ['SSL_CERT_FILE'] = netfree_windows_path
@@ -15,105 +15,63 @@ load_dotenv()
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 SERPER_KEY = os.getenv("SERPER_API_KEY")
 
-# --- פונקציות הלוגיקה (מועתקות מ-main.py עם התאמות קלות) ---
-
-def generate_queries(company_name):
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={GEMINI_KEY}"
-    prompt = f"ייצר עבורי 4 שאילתות חיפוש בגוגל לאיתור רשימת סניפי {company_name} בישראל. החזר רק רשימה של שאילתות בשורות נפרדות."
-    payload = {"contents": [{"parts": [{"text": prompt}]}]}
-    
-    try:
-        response = requests.post(url, json=payload, timeout=30)
-        response.raise_for_status() # יזרוק שגיאה אם הסטטוס הוא לא 200
-        result = response.json()
-        
-        # בדיקה אם גוגל החזיר 'candidates'
-        if 'candidates' in result and result['candidates'][0].get('content'):
-            text_response = result['candidates'][0]['content']['parts'][0]['text']
-            return [q.strip("- *") for q in text_response.strip().split('\n') if q.strip()]
-        else:
-            # אם אין 'candidates', נדפיס את התשובה המלאה כדי להבין למה
-            st.error(f"גוגל לא החזיר תוצאות. תשובה גולמית: {result}")
-            return []
-            
-    except Exception as e:
-        st.error(f"שגיאה בפנייה לג'מיני: {e}")
-        if hasattr(e, 'response') and e.response is not None:
-            st.code(e.response.text) # מציג את פירוט השגיאה מהשרת
-        return []
-
-def search_serper(query):
+def search_serper(company_name):
+    """חיפוש יציב דרך Serper - ללא הגבלות 429 קשות"""
     url = "https://google.serper.dev/search"
+    query = f"סניפים של {company_name} בישראל רשימה כתובות"
+    payload = {"q": query, "gl": "il", "hl": "iw", "num": 15}
     headers = {'X-API-KEY': SERPER_KEY, 'Content-Type': 'application/json'}
-    payload = {"q": query, "gl": "il", "hl": "iw"}
     response = requests.post(url, json=payload, headers=headers)
     return response.json().get('organic', [])
 
-def extract_to_json(raw_results):
+def extract_with_gemini(raw_results, company_name):
+    """חילוץ חכם של נתונים מתוך תוצאות החיפוש"""
     context = ""
-    for res in raw_results[:15]: # הגבלה ל-15 תוצאות ראשונות כדי לחסוך זמן/טוקנים ב-PoC
-        context += f"Title: {res.get('title')}\nSnippet: {res.get('snippet')}\nLink: {res.get('link')}\n---\n"
-    
+    for res in raw_results:
+        context += f"Source: {res.get('link')}\nInfo: {res.get('title')} - {res.get('snippet')}\n---\n"
+
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={GEMINI_KEY}"
+    
     prompt = f"""
-    חלץ רשימת סניפים בפורמט JSON מהטקסט הבא. 
-    עבור כל סניף: 'שם הסניף', 'כתובת', 'מקור המידע'.
-    החזר רשימת JSON בלבד!
-    טקסט: {context}
+    אתה מנתח נתונים מקצועי. חלץ רשימת סניפים של {company_name} מהטקסט הבא.
+    הנחיות:
+    1. החזר רשימת JSON בלבד של אובייקטים.
+    2. כל אובייקט יכיל: 'שם הסניף', 'כתובת', 'עיר', 'מקור'.
+    3. אם יש סניפים כפולים, אחד אותם לרשומה אחת.
+    
+    טקסט לניתוח:
+    {context}
     """
+    
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
     response = requests.post(url, json=payload, timeout=60)
-    raw_json = response.json()['candidates'][0]['content']['parts'][0]['text']
-    clean_json = raw_json.replace("```json", "").replace("```", "").strip()
-    return json.loads(clean_json)
+    result = response.json()
+    
+    try:
+        raw_text = result['candidates'][0]['content']['parts'][0]['text']
+        clean_json = raw_text.replace("```json", "").replace("```", "").strip()
+        return json.loads(clean_json)
+    except:
+        return []
 
-# --- ממשק Streamlit ---
+# ממשק המשתמש
+st.set_page_config(page_title="Branch Locator AI", layout="wide")
+st.title("🏙️ מאתר סניפים חכם (Hybrid AI)")
 
-st.set_page_config(page_title="סורק סניפים AI", layout="wide")
+company = st.text_input("הכניסי שם חברה (למשל: סופר-פארם, בנק דיסקונט):")
 
-# CSS ליישור לימין
-st.markdown("""
-    <style>
-    .main, .stApp { direction: rtl; text-align: right; }
-    div[data-testid="stExpander"] { text-align: right; }
-    </style>
-    """, unsafe_allow_html=True)
-
-st.title("🏙️ מאתר סניפים חכם (AI)")
-st.write("הכניסי שם של חברה, והמערכת תסרוק את הרשת ותחלץ רשימת סניפים מסודרת.")
-
-company_input = st.text_input("שם החברה לחיפוש:", placeholder="לדוגמה: ארומה, בנק הפועלים, שופרסל...")
-
-if st.button("התחל סריקה"):
-    if not company_input:
-        st.warning("בבקשה הכניסי שם חברה.")
-    else:
-        with st.status("עובד על זה...", expanded=True) as status:
-            # שלב 1
-            st.write("🔍 מייצר שאילתות חיפוש...")
-            queries = generate_queries(company_input)
-            
-            # שלב 2
-            st.write("🌐 אוסף מידע מגוגל...")
-            all_results = []
-            for q in queries:
-                all_results.extend(search_serper(q))
-            
-            # שלב 3
-            st.write(f"🧠 מעבד {len(all_results)} מקורות ומחלץ נתונים...")
-            branches = extract_to_json(all_results)
-            
-            status.update(label="הסריקה הושלמה!", state="complete", expanded=False)
-
+if st.button("חפש סניפים"):
+    if company:
+        with st.status("סורק נתונים...", expanded=True) as status:
+            st.write("🌐 אוסף מידע מרשת האינטרנט...")
+            results = search_serper(company)
+            st.write("🧠 מנתח ומנקה כפילויות בעזרת AI...")
+            branches = extract_with_gemini(results, company)
+            status.update(label="הסריקה הושלמה!", state="complete")
+        
         if branches:
-            st.subheader(f"נמצאו {len(branches)} סניפים עבור '{company_input}'")
-            
-            # הצגת הנתונים בטבלה יפה
             df = pd.DataFrame(branches)
             st.dataframe(df, use_container_width=True)
-            
-            # אפשרות להורדת התוצאות ב-CSV
-            csv = df.to_csv(index=False).encode('utf-8-sig')
-            st.download_button("הורדת הרשימה כ-CSV", csv, "branches.csv", "text/csv")
+            st.download_button("הורדת CSV", df.to_csv(index=False).encode('utf-8-sig'), "branches.csv")
         else:
-            st.error("לא הצלחנו לחלץ סניפים. נסי שוב או שנו את השאילתה.")
+            st.error("לא נמצאו סניפים. נסי לחפש שם חברה אחר.")
