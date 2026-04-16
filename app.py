@@ -3,8 +3,7 @@ from logic import run_multi_company_researcher
 
 st.set_page_config(page_title="AI Branch Investigator", page_icon="🕵️", layout="wide")
 
-st.title("🕵️ סוכן חוקר: הצלבת מפות ואינטרנט")
-st.markdown("הסוכן מבצע מחקר דו-שלבי: קודם ב-**Google Maps** ואז ב-**Google Search** לאימות והשלמת נתונים.")
+st.title("🕵️ סוכן חוקר: סניפים של חברות")
 
 # קלט המשתמש
 input_text = st.text_area(

@@ -3,6 +3,7 @@ import sys
 import json
 import requests
 import numpy as np
+from config import initialize_vertex_ai
 from dotenv import load_dotenv
 import vertexai
 from vertexai.generative_models import (
@@ -15,12 +16,12 @@ from vertexai.language_models import TextEmbeddingModel
 
 # --- 1. אתחול מערכת ---
 load_dotenv()
-PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT")
-MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
-LOCATION = "us-east1" 
+EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME")
+GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL_NAME")
 
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "credentials.json"
-vertexai.init(project=PROJECT_ID, location=LOCATION)
+
+
+MAPS_API_KEY = initialize_vertex_ai()
 
 # --- פונקציית עזר לחילוץ טקסט (מהקוד המקורי שלך) ---
 def extract_text(response):
@@ -31,7 +32,7 @@ def extract_text(response):
     except Exception:
         return "לא ניתן היה לחלץ טקסט מהתשובה."
 
-# --- 2. כלי גוגל מפות (מהקוד המקורי שלך) ---
+# --- 2. כלי גוגל מפות  ---
 def get_branches_from_maps(query: str):
     print(f"\n[מערכת] מחפש במפות: {query}")
     url = f"https://maps.googleapis.com/maps/api/place/textsearch/json?query={query}&key={MAPS_API_KEY}"
@@ -61,7 +62,7 @@ def filter_duplicates_by_embeddings(branches, threshold=0.92):
     if not branches: return []
     
     print("\n[מערכת] מסנן כפילויות...")
-    model = TextEmbeddingModel.from_pretrained("text-embedding-004")
+    model = TextEmbeddingModel.from_pretrained(EMBEDDING_MODEL_NAME)
     
     addresses = [f"{b.get('city', '')} {b.get('address', '')}" for b in branches]
     embeddings = [e.values for e in model.get_embeddings(addresses)]
@@ -84,15 +85,17 @@ def filter_duplicates_by_embeddings(branches, threshold=0.92):
 
 # --- 3. לוגיקת המחקר המשולב ---
 def run_multi_company_researcher(companies_list):
+    #בגלל מגלב תכנית של המודל שאי אפשר לשלב כלי של חי]וש בגוגל יחד עם מפות
+    #נפריד ל2 סוכנים
     
     model_maps = GenerativeModel(
-        model_name="gemini-2.5-flash",
+        model_name=GEMINI_MODEL_NAME,
         tools=[maps_tool],
         system_instruction="אתה מומחה לאיתור סניפים במפות. השתמש תמיד בכלי המפות."
     )
     
     model_web = GenerativeModel(
-        model_name="gemini-2.5-flash",
+        model_name=GEMINI_MODEL_NAME,
         tools=[web_search_tool],
         system_instruction="""אתה חוקר אינטרנט. המשימה שלך היא למצוא סניפים. 
         החזר אך ורק טקסט בפורמט JSON תקני של מערך אובייקטים. בלי שום מילות הסבר."""
