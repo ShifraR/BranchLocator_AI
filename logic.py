@@ -1,34 +1,5 @@
 import os
 import sys
-
-# --- 1. התיקון ה"גרעיני" לנטפרי (חייב להופיע לפני כל import אחר!) ---
-netfree_bundle = r'C:\ProgramData\NetFree\CA\netfree-ca-bundle-curl.crt'
-
-if os.path.exists(netfree_bundle):
-    # הגדרת כל משתנה סביבה אפשרי שספריות תקשורת מחפשות
-    os.environ['REQUESTS_CA_BUNDLE'] = netfree_bundle
-    os.environ['SSL_CERT_FILE'] = netfree_bundle
-    os.environ['CURL_CA_BUNDLE'] = netfree_bundle
-    os.environ['HTTPLIB2_CA_CERTS'] = netfree_bundle
-    
-    # התיקון הקריטי עבור gRPC (ג'ימיני) - לפעמים הוא מעדיף סלאשים רגילים
-    os.environ['GRPC_DEFAULT_SSL_ROOTS_CERTIFICATES_PATH'] = netfree_bundle.replace('\\', '/')
-    
-    # הזרקה ישירה לספריית ה-SSL של פייתון (Monkey Patch)
-    import ssl
-    try:
-        orig_create_default_context = ssl.create_default_context
-        def netfree_context(*args, **kwargs):
-            context = orig_create_default_context(*args, **kwargs)
-            context.load_verify_locations(cafile=netfree_bundle)
-            return context
-        ssl.create_default_context = netfree_context
-        print("✅ NetFree Nuclear Patch Applied")
-    except Exception as e:
-        print(f"⚠️ SSL Patch Error: {e}")
-else:
-    print(f"❌ שגיאה: תעודת נטפרי לא נמצאה בנתיב המצוין!")
-
 import requests
 from dotenv import load_dotenv
 import vertexai
@@ -50,7 +21,7 @@ LOCATION = "us-east1"
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "credentials.json"
 vertexai.init(project=PROJECT_ID, location=LOCATION)
 
-# --- פונקציית עזר לחילוץ טקסט בטוח (פותרת את השגיאה שלך) ---
+# --- פונקציית עזר לחילוץ טקסט  ---
 def extract_text(response):
     """מחברת את כל חלקי הטקסט של המודל ליחידה אחת"""
     try:
@@ -97,7 +68,7 @@ def run_multi_company_researcher(companies_list):
         system_instruction="אתה מומחה לאיתור סניפים במפות. השתמש תמיד בכלי המפות."
     )
     
-    # מודל ב': אינטרנט חופשי (כאן קרתה השגיאה)
+    # מודל ב': חיפוש בגוגל
     model_web = GenerativeModel(
         model_name="gemini-2.5-flash",
         tools=[web_search_tool],
@@ -126,7 +97,6 @@ def run_multi_company_researcher(companies_list):
         """
         res_web = model_web.generate_content(web_prompt)
         
-        # כאן התיקון! במקום res_web.text אנחנו משתמשים ב-extract_text
         final_text = extract_text(res_web)
         final_reports.append(final_text)
 
