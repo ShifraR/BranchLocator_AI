@@ -13,3 +13,4 @@ __pycache__/
 # הגדרות של VS Code
 .vscode/
 .env
+credentials.json
