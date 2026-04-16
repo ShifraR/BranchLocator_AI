@@ -1,16 +1,17 @@
 import os
 import sys
+import json
 import requests
+import numpy as np
 from dotenv import load_dotenv
 import vertexai
 from vertexai.generative_models import (
     GenerativeModel,
     Tool,
     FunctionDeclaration,
-    Part,
-    grounding 
+    Part
 )
-
+from vertexai.language_models import TextEmbeddingModel
 
 # --- 1. אתחול מערכת ---
 load_dotenv()
@@ -21,7 +22,7 @@ LOCATION = "us-east1"
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "credentials.json"
 vertexai.init(project=PROJECT_ID, location=LOCATION)
 
-# --- פונקציית עזר לחילוץ טקסט  ---
+# --- פונקציית עזר לחילוץ טקסט (מהקוד המקורי שלך) ---
 def extract_text(response):
     """מחברת את כל חלקי הטקסט של המודל ליחידה אחת"""
     try:
@@ -30,9 +31,8 @@ def extract_text(response):
     except Exception:
         return "לא ניתן היה לחלץ טקסט מהתשובה."
 
-# --- 2. כלי גוגל מפות ---
+# --- 2. כלי גוגל מפות (מהקוד המקורי שלך) ---
 def get_branches_from_maps(query: str):
-    """שואב נתונים פיזיים מ-Google Maps API"""
     print(f"\n[מערכת] מחפש במפות: {query}")
     url = f"https://maps.googleapis.com/maps/api/place/textsearch/json?query={query}&key={MAPS_API_KEY}"
     try:
@@ -53,27 +53,49 @@ maps_tool = Tool(function_declarations=[
     )
 ])
 
-# כלי החיפוש החופשי
+# כלי החיפוש החופשי (הגרסה המקורית שעבדה לך)
 web_search_tool = Tool.from_dict({"google_search": {}})
 
-# --- 3. לוגיקת המחקר המשולב ---
-
-def run_multi_company_researcher(companies_list):
-    """מריץ מחקר שטח משולב על רשימת חברות"""
+# --- תוספת: פונקציית סינון כפילויות ע"י Embeddings ---
+def filter_duplicates_by_embeddings(branches, threshold=0.92):
+    if not branches: return []
     
-    # מודל א': מפות
+    print("\n[מערכת] מסנן כפילויות...")
+    model = TextEmbeddingModel.from_pretrained("text-embedding-004")
+    
+    addresses = [f"{b.get('city', '')} {b.get('address', '')}" for b in branches]
+    embeddings = [e.values for e in model.get_embeddings(addresses)]
+    
+    unique_branches = []
+    indices_to_skip = set()
+
+    for i in range(len(branches)):
+        if i in indices_to_skip: continue
+        unique_branches.append(branches[i])
+        for j in range(i + 1, len(branches)):
+            similarity = np.dot(embeddings[i], embeddings[j]) / (
+                np.linalg.norm(embeddings[i]) * np.linalg.norm(embeddings[j])
+            )
+            if similarity > threshold:
+                indices_to_skip.add(j)
+                unique_branches[-1]["source"] += f" + {branches[j].get('source', '')}"
+                
+    return unique_branches
+
+# --- 3. לוגיקת המחקר המשולב ---
+def run_multi_company_researcher(companies_list):
+    
     model_maps = GenerativeModel(
         model_name="gemini-2.5-flash",
         tools=[maps_tool],
         system_instruction="אתה מומחה לאיתור סניפים במפות. השתמש תמיד בכלי המפות."
     )
     
-    # מודל ב': חיפוש בגוגל
     model_web = GenerativeModel(
         model_name="gemini-2.5-flash",
         tools=[web_search_tool],
-        system_instruction="""אתה חוקר אינטרנט. המשימה שלך היא למצוא סניפים ומידע רשמי מאתרי חברות.
-        התמקד במציאת רשימת סניפים מעודכנת. החזר תמיד טבלה מסודרת."""
+        system_instruction="""אתה חוקר אינטרנט. המשימה שלך היא למצוא סניפים. 
+        החזר אך ורק טקסט בפורמט JSON תקני של מערך אובייקטים. בלי שום מילות הסבר."""
     )
 
     final_reports = []
@@ -84,20 +106,37 @@ def run_multi_company_researcher(companies_list):
         res_maps = chat.send_message(f"מצא סניפים של {company} בישראל")
         
         maps_data = []
-        if res_maps.candidates[0].content.parts[0].function_call:
-            call = res_maps.candidates[0].content.parts[0].function_call
-            maps_data = get_branches_from_maps(call.args["query"])
+        try:
+            if res_maps.candidates[0].content.parts[0].function_call:
+                call = res_maps.candidates[0].content.parts[0].function_call
+                maps_data = get_branches_from_maps(call.args["query"])
+        except Exception:
+            pass
 
-        # ב. שלב האינטרנט - שימוש בפונקציית העזר extract_text
+        # ב. שלב האינטרנט
         web_prompt = f"""
-        חפש סניפים של {company} מהאינטרנט ומהאתר הרשמי שלהם.
-        הנה מה שמצאנו במפות: {maps_data}.
-        חפש סניפים נוספים או אימות לכתובות אלו. 
-        החזר טבלה אחת הכוללת: חברה, סניף, כתובת ומקור המידע.
+        חפש סניפים של {company} מהאינטרנט. שלב גם את נתוני המפות: {maps_data}.
+        החזר אך ורק מערך JSON (ללא Markdown וללא טקסט נוסף) שבו כל אובייקט מכיל:
+        "branch_name", "city", "address", "source".
         """
         res_web = model_web.generate_content(web_prompt)
+        raw_text = extract_text(res_web)
         
-        final_text = extract_text(res_web)
-        final_reports.append(final_text)
+        try:
+            # ניקוי עטיפות Markdown למקרה שהמודל הוסיף אותן
+            clean_json = raw_text.replace("```json", "").replace("```", "").strip()
+            branches_list = json.loads(clean_json)
+            
+            # סינון ויצירת הטבלה
+            cleaned_branches = filter_duplicates_by_embeddings(branches_list)
+            
+            report = f"### דוח סניפים: {company}\n| סניף | עיר | כתובת | מקור |\n|---|---|---|---|\n"
+            for b in cleaned_branches:
+                report += f"| {b.get('branch_name','')} | {b.get('city','')} | {b.get('address','')} | {b.get('source','')} |\n"
+            
+            final_reports.append(report)
+            
+        except Exception as e:
+            final_reports.append(f"שגיאה בעיבוד {company}: {e}\nפלט גולמי: {raw_text}")
 
     return "\n\n---\n\n".join(final_reports)
